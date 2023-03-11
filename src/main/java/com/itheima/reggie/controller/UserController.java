@@ -5,20 +5,18 @@ import com.itheima.reggie.common.MailUtils;
 import com.itheima.reggie.common.R;
 import com.itheima.reggie.entity.User;
 import com.itheima.reggie.service.UserService;
-//import com.sun.tools.javac.main.Main;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.ibatis.session.ResultContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.mail.MessagingException;
-import javax.naming.spi.DirStateFactory;
 import javax.servlet.http.HttpSession;
-import javax.xml.transform.Result;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @Slf4j
@@ -26,6 +24,9 @@ import java.util.Map;
 public class UserController {
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private RedisTemplate redisTemplate;
 
     @PostMapping("/sendMsg")
     public R<String> sendMsg(@RequestBody User user, HttpSession session) throws MessagingException {
@@ -37,7 +38,11 @@ public class UserController {
             //这里的phone其实就是邮箱，code是我们生成的验证码
     //        MailUtils.sendTestMail(phone, code);
             //验证码存session，方便后面拿出来比对
-            session.setAttribute(phone, code);
+            //session.setAttribute(phone, code);
+
+            //将生成的验证码缓存到Redis中，并且设置时长为5分钟
+            redisTemplate.opsForValue().set(phone,code,5, TimeUnit.MINUTES);
+
             return R.success("验证码发送成功");
         }
         return R.error("验证码发送失败");
@@ -50,8 +55,13 @@ public class UserController {
         String phone = map.get("phone").toString();
         //获取验证码
         String code = map.get("code").toString();
+
+        //从Redis中获取验证码
+        String codeInSession = redisTemplate.opsForValue().get(phone).toString();
+
+
         //从session中获取验证码
-        String codeInSession = session.getAttribute(phone).toString();
+        //String codeInSession = session.getAttribute(phone).toString();
         //比较这用户输入的验证码和session中存的验证码是否一致
         if (code != null && code.equals(codeInSession)) {
             //如果输入正确，判断一下当前用户是否存在
@@ -68,8 +78,13 @@ public class UserController {
             }
             //存个session，表示登录状态
             session.setAttribute("user",user.getId());
+            //如果登录成功，即删除Redis缓存的数据
+            redisTemplate.delete(phone);
+
             //并将其作为结果返回
             return R.success(user);
+
+
         }
         return R.error("登录失败");
     }
